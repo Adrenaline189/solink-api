@@ -1,0 +1,15 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Setting {
+  userId    String   @id
+  range     String
+  timezone  String
+  updatedAt DateTime @default(now()) @updatedAt
+}
