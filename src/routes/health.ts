@@ -8,7 +8,7 @@ router.get("/", (_req, res) => {
   res.json({ ok: true, service: "api" });
 });
 
-// Database health
+// DB health
 router.get("/db", async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
