@@ -1,42 +1,20 @@
-import { Router } from "express";
-import { PrismaClient } from "@prisma/client";
+import type { Express, Request, Response } from "express";
+import { prismaWrite } from "../lib/prisma.js";
 
-const router = Router();
-const prisma = new PrismaClient();
+export function mountSettings(app: Express) {
+  app.get("/api/settings", async (_req: Request, res: Response) => {
+    res.json({ ok: true });
+  });
 
-// GET settings
-router.get("/", async (req, res) => {
-  const userId = req.query.userId as string;
-  if (!userId) {
-    return res.status(400).json({ error: "userId is required" });
-  }
+  app.post("/api/settings", async (req: Request, res: Response) => {
+    // ตัวอย่าง: เขียนข้อมูลลง DB
+    // await prismaWrite.setting.upsert({ ... })
+    res.json({ ok: true, body: req.body });
+  });
 
-  try {
-    const settings = await prisma.setting.findUnique({ where: { userId } });
-    if (!settings) return res.status(404).json({ error: "No settings found" });
-    res.json(settings);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST/UPSERT settings
-router.post("/", async (req, res) => {
-  const { userId, range, timezone } = req.body;
-  if (!userId || !range || !timezone) {
-    return res.status(400).json({ error: "Missing fields: userId, range, timezone" });
-  }
-
-  try {
-    const saved = await prisma.setting.upsert({
-      where: { userId },
-      update: { range, timezone, updatedAt: new Date() },
-      create: { userId, range, timezone },
-    });
-    res.json(saved);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-export default router;
+  app.put("/api/settings/:id", async (req: Request, res: Response) => {
+    const { id } = req.params;
+    // await prismaWrite.setting.update({ where: { id }, data: { ... } })
+    res.json({ ok: true, id });
+  });
+}
