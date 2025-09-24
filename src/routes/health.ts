@@ -1,10 +1,12 @@
-import type { Express } from "express";
-import { prismaRead } from "../lib/prisma";
+import type { Express, Request, Response } from "express";
+import { prismaRead } from "../lib/prisma.js";
 
 export function mountHealth(app: Express) {
-  app.get("/api/health", (_req, res) => res.json({ ok: true, service: "api" }));
+  app.get("/api/health", (_req: Request, res: Response) => {
+    res.json({ ok: true, service: "api" });
+  });
 
-  app.get("/api/health/db", async (_req, res) => {
+  app.get("/api/health/db", async (_req: Request, res: Response) => {
     try {
       await prismaRead.$queryRaw`SELECT 1`;
       res.json({ db: "up" });
