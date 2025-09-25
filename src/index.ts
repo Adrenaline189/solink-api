@@ -1,6 +1,7 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
 import { mountHealth } from "./routes/health.js"; // <- สำคัญ: ESM ต้อง .js
+import { mountSettings } from "./routes/settings.js";
 
 const app = express();
 
