@@ -5,8 +5,10 @@ import { PrismaClient } from "@prisma/client";
 function maskHost(u?: string) {
   try {
     const { hostname } = new URL(u!);
-    return hostname.replace(/^[^.]+/, "ep-xxxxx"); // ปิดบังส่วนนำ
-  } catch { return "n/a"; }
+    return hostname.replace(/^[^.]+/, "ep-xxxxx");
+  } catch {
+    return "n/a";
+  }
 }
 
 export function mountHealth(app: Express) {
@@ -14,7 +16,6 @@ export function mountHealth(app: Express) {
     res.json({ ok: true, service: "api" });
   });
 
-  // --- DEBUG: โชว์ว่าตอนนี้ env ชี้ host อะไรอยู่
   app.get("/api/debug/db-url", (_req: Request, res: Response) => {
     res.json({
       DATABASE_URL_HOST: maskHost(process.env.DATABASE_URL),
@@ -23,23 +24,24 @@ export function mountHealth(app: Express) {
   });
 
   app.get("/api/health/db", async (_req: Request, res: Response) => {
+    let testClient: PrismaClient | undefined;
     try {
-      // (A) ทดสอบด้วย client ที่ "บังคับ" pooled URL โดยตรง
-      const pooledUrl = process.env.DATABASE_POOL_URL!;
-      const testClient = new PrismaClient({ datasources: { db: { url: pooledUrl } } });
+      const pooledUrl = process.env.DATABASE_POOL_URL;
+      if (!pooledUrl) {
+        return res.status(500).json({ db: "down", via: "pooled", error: "DATABASE_POOL_URL not set" });
+      }
+      testClient = new PrismaClient({ datasources: { db: { url: pooledUrl } } });
+      // @ts-ignore
       await testClient.$queryRaw`SELECT 1`;
-
-      // (B) ถ้าข้อ (A) ผ่าน เราค่อยใช้ client กลางตามปกติ (ควรชี้ pooled เหมือนกัน)
+      // @ts-ignore
       await prismaRead.$queryRaw`SELECT 1`;
-
-      res.json({ db: "up", via: "pooled" });
+      res.json({ db: "up", via: "pooled", host: maskHost(pooledUrl) });
     } catch (e: any) {
-      res.status(500).json({
-        db: "down",
-        via: "pooled",
-        usedHost: maskHost(process.env.DATABASE_POOL_URL),
-        error: String(e?.message || e),
-      });
+      res.status(500).json({ db: "down", via: "pooled", error: String(e?.message || e) });
+    } finally {
+      if (testClient) {
+        try { await testClient.$disconnect(); } catch {}
+      }
     }
   });
 }
