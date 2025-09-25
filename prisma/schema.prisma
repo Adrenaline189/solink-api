@@ -8,8 +8,12 @@ datasource db {
 }
 
 model Setting {
-  userId    String   @id
-  range     String
-  timezone  String
+  id        String   @id @default(cuid())
+  userId    String?  // null = global
+  key       String
+  value     String   // JSON string
   updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@unique([userId, key], name: "userId_key")
 }
