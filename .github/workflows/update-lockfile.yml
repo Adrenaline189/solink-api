@@ -1,0 +1,39 @@
+name: Update lockfile
+on:
+  # รันเองได้จากแท็บ Actions
+  workflow_dispatch:
+  # ให้รันอัตโนมัติเมื่อ package.json ถูกแก้
+  push:
+    paths:
+      - 'package.json'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # สร้าง/อัปเดต package-lock.json ให้ตรงกับ package.json
+      - run: npm install
+
+      # เปิด PR ที่มีเฉพาะ package-lock.json
+      - name: Create PR for updated lockfile
+        uses: peter-evans/create-pull-request@v6
+        with:
+          title: "chore: sync lockfile with package.json"
+          body: "This PR updates package-lock.json to keep it in sync with package.json (required for npm ci on Render)."
+          commit-message: "chore: sync lockfile with package.json"
+          branch: chore/sync-lockfile
+          base: main
+          add-paths: |
+            package-lock.json
