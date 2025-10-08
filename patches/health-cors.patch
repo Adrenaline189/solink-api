@@ -1,0 +1,21 @@
+*** Begin Patch
+*** Update File: src/index.ts
+@@
+-import express from "express";
++import express from "express";
++import cors from "cors";
++import helmet from "helmet";
+@@
+ const app = express();
+
+ app.set("trust proxy", 1);
+-app.use(express.json());
++app.use(express.json());
++app.use(helmet());
++// Allow multiple origins via comma-separated env
++app.use(cors({
++  origin: (process.env.CORS_ORIGIN || "*").split(",").map(s => s.trim()),
++  credentials: true,
++}));
+
+*** End Patch

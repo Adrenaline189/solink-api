@@ -1,0 +1,40 @@
+*** Begin Patch
+*** Update File: src/routes/health.ts
+@@
+ export function mountHealth(app: Express) {
+   app.get("/api/health", (_req: Request, res: Response) => {
+     res.json({ ok: true, service: "api" });
+   });
++
++  // Extended health with version & DB ping
++  app.get("/api/healthz", async (_req: Request, res: Response) => {
++    const startedAt = Date.now();
++    let dbOk = false;
++    let dbMs = 0;
++    try {
++      const t0 = Date.now();
++      // @ts-ignore
++      await prismaRead.$queryRaw`SELECT 1`;
++      dbMs = Date.now() - t0;
++      dbOk = true;
++    } catch (e: any) {
++      return res.status(500).json({ ok: false, error: String(e?.message || e) });
++    }
++
++    let version = "0.0.0";
++    try {
++      version = require("../../package.json").version || version;
++    } catch {}
++
++    return res.json({
++      ok: true,
++      version,
++      node: process.version,
++      env: process.env.NODE_ENV || "development",
++      uptimeSec: Math.round(process.uptime()),
++      db: { ok: dbOk, ms: dbMs, host: (process.env.READONLY_POOL_URL || process.env.DATABASE_POOL_URL || process.env.DATABASE_URL || "").toString() },
++      now: new Date().toISOString(),
++      elapsedMs: Date.now() - startedAt,
++    });
++  });
+*** End Patch
