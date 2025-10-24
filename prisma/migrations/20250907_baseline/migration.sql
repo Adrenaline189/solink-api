@@ -1,0 +1,2 @@
+-- Baseline migration to align local history with database.
+-- No-op: the database already matches the current Prisma schema.
