@@ -5,7 +5,7 @@
   "type": "module",
   "engines": { "node": ">=20 <=22" },
   "scripts": {
-    "dev": "ts-node src/index.ts",
+    "dev": "ts-node --esm src/index.ts",
     "build": "tsc -p .",
     "start": "node dist/index.js",
     "start:prod": "NODE_ENV=production node dist/index.js",
@@ -27,6 +27,7 @@
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.3",
+    "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^24.5.2",
     "prisma": "^5.22.0",
     "ts-node": "^10.9.2",
