@@ -6,16 +6,14 @@ import { authOptional } from "../middleware/auth.js";
 const r = Router();
 r.use(authOptional);
 
-// กำหนด key ที่อนุญาต
+// key ที่อนุญาต
 const allowedKeys = ["lang", "theme"] as const;
 type AllowedKey = (typeof allowedKeys)[number];
 
-// แปลง unknown เป็น string JSON
 function toJsonString(v: unknown) {
   return typeof v === "string" ? v : JSON.stringify(v);
 }
 
-// โหลด settings รวม global + user (user override global)
 async function loadMergedSettings(userId: string | null) {
   const [globals, personals] = await Promise.all([
     prisma.setting.findMany({ where: { userId: null } }),
@@ -48,13 +46,13 @@ r.get("/settings", async (req, res) => {
   }
 });
 
-// POST /api/settings  — upsert หลาย key
+// POST /api/settings — upsert หลาย key
 r.post("/settings", async (req, res) => {
   try {
     const body = (req.body ?? {}) as Record<string, unknown>;
 
-    const entries = Object.entries(body).filter(([k]) =>
-      (allowedKeys as readonly string[]).includes(k as AllowedKey),
+    const entries = Object.entries(body).filter(
+      ([k]) => (allowedKeys as readonly string[]).includes(k as AllowedKey),
     ) as [AllowedKey, unknown][];
 
     if (entries.length === 0) {
@@ -68,14 +66,12 @@ r.post("/settings", async (req, res) => {
         const value = toJsonString(val);
 
         if (userId) {
-          // user scope
           await tx.setting.upsert({
             where: { userId_key: { userId, key } },
             create: { userId, key, value },
             update: { value },
           });
         } else {
-          // global scope (userId = null) ต้องเช็คเองเพราะ composite unique ไม่ครอบคลุม null
           const existing = await tx.setting.findFirst({
             where: { userId: null, key },
             select: { id: true },
@@ -90,9 +86,12 @@ r.post("/settings", async (req, res) => {
       }
     });
 
+    // แก้ implicit any (อย่า map พารามิเตอร์ชื่อ e โดยไม่พิมพ์ชนิด)
+    const obj = Object.fromEntries(entries.map(([k, v]) => [k, v])) as Record<string, unknown>;
+
     res.json({
       ok: true,
-      updated: Object.fromEntries(entries),
+      updated: obj,
       scope: userId ? "user" : "global",
       userId,
     });
