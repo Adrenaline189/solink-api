@@ -1,14 +1,16 @@
 // src/routes/auth.ts
-import { Router } from "express";
+import type { Express, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma.js";
 
-const r = Router();
+export default function authRoutes(app: Express) {
+  app.post("/api/auth/demo-login", async (req: Request, res: Response) => {
+    // ตัวอย่าง: รับ walletAddress แล้วออก token เดโม่
+    const { wallet } = (req.body ?? {}) as { wallet?: string };
+    if (!wallet) return res.status(400).json({ ok: false, error: "wallet required" });
 
-/** ตัวอย่าง route ออก token ทดสอบ */
-r.post("/auth/demo", async (_req, res) => {
-  const token = jwt.sign({ sub: "demo-user" }, process.env.JWT_SECRET!, { expiresIn: "7d" });
-  res.json({ ok: true, token });
-});
-
-export default r;
+    // คุณจะปรับ logic จริงทีหลังได้
+    const token = jwt.sign({ id: wallet, wallet }, process.env.JWT_SECRET!, { expiresIn: "7d" });
+    res.json({ ok: true, token });
+  });
+}
