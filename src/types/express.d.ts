@@ -1,11 +1,16 @@
+// src/types/express.d.ts
 import "express";
 
-declare module "express-serve-static-core" {
-  interface Request {
-    user?: {
-      sub: string; // wallet address
-      iat?: number;
-      exp?: number;
-    };
+declare global {
+  namespace Express {
+    interface UserPayload {
+      id: string;
+      wallet?: string | null;
+      sub?: string;
+    }
+    interface Request {
+      user?: UserPayload;
+    }
   }
 }
+export {};
