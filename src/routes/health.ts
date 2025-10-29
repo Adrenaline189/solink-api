@@ -4,12 +4,12 @@ import { prisma } from "../lib/prisma.js";
 
 const r = Router();
 
-// /api/health
+// GET /api/health
 r.get("/health", (_req, res) => {
   res.json({ ok: true, service: "api" });
 });
 
-// /api/health/db
+// GET /api/health/db
 r.get("/health/db", async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
