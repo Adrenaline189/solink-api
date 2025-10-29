@@ -1,22 +1,22 @@
 // src/routes/health.ts
-import type { Express, Request, Response } from "express";
+import type { Router } from "express";
 import { prisma } from "../lib/prisma.js";
 
-export default function healthRoutes(app: Express) {
-  app.get("/api/health", (_: Request, res: Response) => {
+export default function mountHealth(router: Router) {
+  router.get("/health", (_req, res) => {
     res.json({ ok: true, service: "api" });
   });
 
-  app.get("/api/health/db", async (_: Request, res: Response) => {
+  router.get("/health/db", async (_req, res) => {
     try {
       await prisma.$queryRaw`SELECT 1`;
       res.json({
-        db: "up",
+        ok: true,
         via: "pooled",
-        host: process.env.DATABASE_POOL_URL ?? process.env.DATABASE_URL ?? "unknown"
+        host: process.env.DATABASE_POOL_URL || process.env.DATABASE_URL
       });
     } catch (e: any) {
-      res.status(500).json({ db: "down", error: String(e?.message || e) });
+      res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
   });
 }
