@@ -11,7 +11,7 @@ import settingsRoutes from "./routes/settings.js";
 const app = express();
 app.use(express.json());
 
-// Helmet (เปิดใช้ CORP แบบ cross-origin เพื่อให้ image/font โหลดข้ามโดเมนได้)
+// Helmet
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
