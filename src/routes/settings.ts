@@ -1,128 +1,62 @@
-import type { Express, Request, Response } from "express";
-import { prismaWrite, prismaRead } from "../lib/prisma.js";
-import { authOptional } from "../middleware/auth.js";
-import { settingsBodySchema, allowedKeys } from "../validation/settings.js";
+import { Router } from "express";
+import { z } from "zod";
+import { prisma } from "../lib/prisma";
 
-function bad(res: Response, msg: string, details?: unknown) {
-  return res.status(400).json({ ok: false, error: msg, details });
-}
+const r = Router();
 
-function toJsonString(v: unknown) {
-  return typeof v === "string" ? v : JSON.stringify(v);
-}
+const UpsertReq = z.object({
+  settings: z.record(z.string().max(128), z.string().max(2048)),
+});
 
-// รวมค่า global + user (user override global)
-async function loadMergedSettings(userId: string | null) {
-  const [globals, personals] = await Promise.all([
-    prismaRead.setting.findMany({ where: { userId: null } }),
-    userId
-      ? prismaRead.setting.findMany({ where: { userId } })
-      : Promise.resolve([] as Awaited<ReturnType<typeof prismaRead.setting.findMany>>)
-  ]);
+r.get("/", async (req, res) => {
+  const userId = req.user?.sub ?? null;
+
+  if (!userId) {
+    const entries = await prisma.setting.findMany({
+      where: { userId: null },
+      take: 100,
+    });
+    const obj = Object.fromEntries(entries.map((e) => [e.key, e.value]));
+    const lang = obj["lang"] ?? "th";
+    const theme = obj["theme"] ?? "light";
+    return res.json({ ok: true, settings: { lang, theme }, source: "db", userId: null });
+  }
+
+  const entries = await prisma.setting.findMany({
+    where: { OR: [{ userId }, { userId: null }] },
+    take: 200,
+  });
 
   const map = new Map<string, string>();
-  for (const r of globals) map.set(r.key, r.value);
-  for (const r of personals) map.set(r.key, r.value);
-
-  const out: Record<string, unknown> = {};
-  for (const [k, raw] of map.entries()) {
-    try { out[k] = JSON.parse(raw); } catch { out[k] = raw; }
+  for (const e of entries) {
+    if (e.userId === null && !map.has(e.key)) map.set(e.key, e.value);
   }
-  return out;
-}
+  for (const e of entries) {
+    if (e.userId === userId) map.set(e.key, e.value);
+  }
 
-export function mountSettings(app: Express) {
-  // auth optional ใต้ path นี้
-  app.use("/api/settings", authOptional);
+  return res.json({ ok: true, settings: Object.fromEntries(map.entries()), source: "db", userId });
+});
 
-  // GET /api/settings
-  app.get("/api/settings", async (req: Request, res: Response) => {
-    try {
-      const userId: string | null = req.user?.id ?? null;
-      const settings = await loadMergedSettings(userId);
-      return res.json({ ok: true, settings, source: "db", userId });
-    } catch (e: any) {
-      return res.status(500).json({ ok: false, error: String(e?.message || e) });
-    }
-  });
+r.put("/", async (req, res) => {
+  const userId = req.user?.sub;
+  if (!userId) return res.status(401).json({ ok: false, error: "unauthorized" });
 
-  // POST /api/settings — upsert หลาย key
-  app.post("/api/settings", async (req: Request, res: Response) => {
-    try {
-      const parsed = settingsBodySchema.safeParse(req.body ?? {});
-      if (!parsed.success) return bad(res, "Invalid body", parsed.error.flatten());
-      const body = parsed.data;
+  const parse = UpsertReq.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ ok: false, error: "bad_request" });
 
-      const entries = Object.entries(body).filter(([k]) =>
-        (allowedKeys as readonly string[]).includes(k)
-      );
-      if (entries.length === 0) return bad(res, "No supported fields");
+  const entries = Object.entries(parse.data.settings);
+  await Promise.all(
+    entries.map(([key, value]) =>
+      prisma.setting.upsert({
+        where: { userId_key: { userId, key } },
+        create: { userId, key, value },
+        update: { value },
+      })
+    )
+  );
 
-      const userId: string | null = req.user?.id ?? null;
+  return res.json({ ok: true, updated: entries.length });
+});
 
-      await prismaWrite.$transaction(async (tx) => {
-        for (const [key, val] of entries) {
-          const value = toJsonString(val);
-
-          if (userId) {
-            // ผู้ใช้ล็อกอิน → ใช้ upsert กับ composite key ได้
-            await tx.setting.upsert({
-              where: { userId_key: { userId, key } }, // userId เป็น string แน่นอนในสาขานี้
-              create: { userId, key, value },
-              update: { value }
-            });
-          } else {
-            // global (userId = null) → ห้าม upsert composite key (NULL ใน unique)
-            const existing = await tx.setting.findFirst({
-              where: { userId: null, key },
-              select: { id: true }
-            });
-
-            if (existing) {
-              await tx.setting.update({
-                where: { id: existing.id },
-                data: { value }
-              });
-            } else {
-              await tx.setting.create({
-                data: { userId: null, key, value }
-              });
-            }
-          }
-        }
-      });
-
-      return res.json({
-        ok: true,
-        updated: body,
-        scope: userId ? "user" : "global",
-        userId
-      });
-    } catch (e: any) {
-      return res.status(500).json({ ok: false, error: String(e?.message || e) });
-    }
-  });
-
-  // PUT /api/settings/:id — อัปเดตรีคอร์ดเดียว
-  app.put("/api/settings/:id", async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      if (!id) return bad(res, "Missing id");
-
-      const { value } = req.body ?? {};
-      if (typeof value === "undefined") return bad(res, "Missing value");
-
-      const updated = await prismaWrite.setting.update({
-        where: { id },
-        data: { value: toJsonString(value) }
-      });
-
-      let parsed: unknown = updated.value;
-      try { parsed = JSON.parse(updated.value); } catch {}
-
-      return res.json({ ok: true, id, updated: parsed, source: "db" });
-    } catch (e: any) {
-      return res.status(500).json({ ok: false, error: String(e?.message || e) });
-    }
-  });
-}
+export default r;
