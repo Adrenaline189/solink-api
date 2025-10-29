@@ -1,62 +1,104 @@
+// src/routes/settings.ts
 import { Router } from "express";
-import { z } from "zod";
-import { prisma } from "../lib/prisma";
+import { prisma } from "../lib/prisma.js";
+import { authOptional } from "../middleware/auth.js";
 
 const r = Router();
+r.use(authOptional);
 
-const UpsertReq = z.object({
-  settings: z.record(z.string().max(128), z.string().max(2048)),
-});
+// กำหนด key ที่อนุญาต
+const allowedKeys = ["lang", "theme"] as const;
+type AllowedKey = (typeof allowedKeys)[number];
 
-r.get("/", async (req, res) => {
-  const userId = req.user?.sub ?? null;
+// แปลง unknown เป็น string JSON
+function toJsonString(v: unknown) {
+  return typeof v === "string" ? v : JSON.stringify(v);
+}
 
-  if (!userId) {
-    const entries = await prisma.setting.findMany({
-      where: { userId: null },
-      take: 100,
-    });
-    const obj = Object.fromEntries(entries.map((e) => [e.key, e.value]));
-    const lang = obj["lang"] ?? "th";
-    const theme = obj["theme"] ?? "light";
-    return res.json({ ok: true, settings: { lang, theme }, source: "db", userId: null });
-  }
-
-  const entries = await prisma.setting.findMany({
-    where: { OR: [{ userId }, { userId: null }] },
-    take: 200,
-  });
+// โหลด settings รวม global + user (user override global)
+async function loadMergedSettings(userId: string | null) {
+  const [globals, personals] = await Promise.all([
+    prisma.setting.findMany({ where: { userId: null } }),
+    userId ? prisma.setting.findMany({ where: { userId } }) : Promise.resolve([]),
+  ]);
 
   const map = new Map<string, string>();
-  for (const e of entries) {
-    if (e.userId === null && !map.has(e.key)) map.set(e.key, e.value);
-  }
-  for (const e of entries) {
-    if (e.userId === userId) map.set(e.key, e.value);
-  }
+  for (const g of globals) map.set(g.key, g.value);
+  for (const p of personals) map.set(p.key, p.value);
 
-  return res.json({ ok: true, settings: Object.fromEntries(map.entries()), source: "db", userId });
+  const out: Record<string, unknown> = {};
+  for (const [k, raw] of map.entries()) {
+    try {
+      out[k] = JSON.parse(raw);
+    } catch {
+      out[k] = raw;
+    }
+  }
+  return out;
+}
+
+// GET /api/settings
+r.get("/settings", async (req, res) => {
+  try {
+    const userId = req.user?.id ?? null;
+    const settings = await loadMergedSettings(userId);
+    res.json({ ok: true, settings, source: "db", userId });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
 });
 
-r.put("/", async (req, res) => {
-  const userId = req.user?.sub;
-  if (!userId) return res.status(401).json({ ok: false, error: "unauthorized" });
+// POST /api/settings  — upsert หลาย key
+r.post("/settings", async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
 
-  const parse = UpsertReq.safeParse(req.body);
-  if (!parse.success) return res.status(400).json({ ok: false, error: "bad_request" });
+    const entries = Object.entries(body).filter(([k]) =>
+      (allowedKeys as readonly string[]).includes(k as AllowedKey),
+    ) as [AllowedKey, unknown][];
 
-  const entries = Object.entries(parse.data.settings);
-  await Promise.all(
-    entries.map(([key, value]) =>
-      prisma.setting.upsert({
-        where: { userId_key: { userId, key } },
-        create: { userId, key, value },
-        update: { value },
-      })
-    )
-  );
+    if (entries.length === 0) {
+      return res.status(400).json({ ok: false, error: "No supported fields" });
+    }
 
-  return res.json({ ok: true, updated: entries.length });
+    const userId = req.user?.id ?? null;
+
+    await prisma.$transaction(async (tx) => {
+      for (const [key, val] of entries) {
+        const value = toJsonString(val);
+
+        if (userId) {
+          // user scope
+          await tx.setting.upsert({
+            where: { userId_key: { userId, key } },
+            create: { userId, key, value },
+            update: { value },
+          });
+        } else {
+          // global scope (userId = null) ต้องเช็คเองเพราะ composite unique ไม่ครอบคลุม null
+          const existing = await tx.setting.findFirst({
+            where: { userId: null, key },
+            select: { id: true },
+          });
+
+          if (existing) {
+            await tx.setting.update({ where: { id: existing.id }, data: { value } });
+          } else {
+            await tx.setting.create({ data: { userId: null, key, value } });
+          }
+        }
+      }
+    });
+
+    res.json({
+      ok: true,
+      updated: Object.fromEntries(entries),
+      scope: userId ? "user" : "global",
+      userId,
+    });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
 });
 
 export default r;
