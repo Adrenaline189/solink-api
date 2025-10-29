@@ -1,32 +1,32 @@
 // src/middleware/auth.ts
 import type { Request, Response, NextFunction } from "express";
-import jwt, { JwtPayload } from "jsonwebtoken";
+import jwt from "jsonwebtoken";
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: { id: string; wallet?: string | null };
-    }
-  }
-}
-
-type MyJwtPayload = JwtPayload & {
-  id?: string;
+type JwtPayloadLoose = {
   sub?: string;
+  id?: string;
   wallet?: string | null;
+  iat?: number;
+  exp?: number;
 };
 
 export function authOptional(req: Request, _res: Response, next: NextFunction) {
-  try {
-    const auth = req.headers.authorization;
-    if (auth?.startsWith("Bearer ")) {
-      const token = auth.split(" ")[1];
-      const payload = jwt.verify(token, process.env.JWT_SECRET!) as MyJwtPayload;
-      const id = payload.id ?? (payload.sub ? String(payload.sub) : undefined);
-      if (id) req.user = { id: String(id), wallet: payload.wallet ?? null };
+  const auth = req.headers.authorization;
+  if (auth?.startsWith("Bearer ")) {
+    const token = auth.split(" ")[1];
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET as string) as JwtPayloadLoose;
+      const id = String(payload.id ?? payload.sub ?? "");
+      if (id) {
+        req.user = {
+          id,
+          wallet: payload.wallet ?? null,
+          sub: payload.sub
+        };
+      }
+    } catch {
+      // token ไม่ถูกต้องก็ปล่อยผ่าน (optional)
     }
-  } catch {
-    // ignore
   }
   next();
 }
