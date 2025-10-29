@@ -1,12 +1,13 @@
-import { PrismaClient, Prisma } from "@prisma/client";
-const log: Prisma.LogLevel[] = ["warn", "error"];
+import { PrismaClient } from "@prisma/client";
 
-export const prismaWrite = new PrismaClient({
-  log,
-  datasources: { db: { url: process.env.DATABASE_URL! } }, // direct
-});
+const globalForPrisma = global as unknown as { prisma?: PrismaClient };
 
-export const prismaRead = new PrismaClient({
-  log,
-  datasources: { db: { url: process.env.READONLY_POOL_URL || process.env.DATABASE_POOL_URL! } }, // pooled
-});
+export const prisma =
+  globalForPrisma.prisma ||
+  new PrismaClient({
+    log: process.env.NODE_ENV === "production" ? [] : ["query", "info", "warn", "error"],
+  });
+
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.prisma = prisma;
+}
