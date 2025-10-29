@@ -3,7 +3,8 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-
+import authRoutes from "./routes/auth.js";
+import settingsRoutes from "./routes/settings.js";
 import mountAuth from "./routes/auth.js";
 import mountSettings from "./routes/settings.js";
 import mountHealth from "./routes/health.js";
