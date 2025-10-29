@@ -8,12 +8,10 @@ datasource db {
 }
 
 model Setting {
-  id        String   @id @default(cuid())
-  userId    String?  @db.VarChar(128)
-  key       String   @db.VarChar(128)
-  value     String   @db.Text
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id     String  @id @default(cuid())
+  userId String? // null = global
+  key    String
+  value  String
 
   @@unique([userId, key])
 }
