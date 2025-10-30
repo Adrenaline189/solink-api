@@ -1,61 +1,48 @@
+// src/index.ts
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
-import authRoutes from "./routes/auth";
-import settingsRoutes from "./routes/settings";
+import mountAuth from "./routes/auth.js";
+import mountSettings from "./routes/settings.js";
+import mountHealth from "./routes/health.js";
+import { authOptional } from "./middleware/auth.js";
 const app = express();
 app.use(express.json());
+// Helmet และ CSP พื้นฐาน
 app.use(helmet({
-    crossOriginResourcePolicy: { policy: "cross-origin" },
-    contentSecurityPolicy: {
-        useDefaults: true,
-        directives: {
-            "img-src": ["'self'", "data:"],
-            "style-src": ["'self'", "https:", "'unsafe-inline'"],
-            "script-src": ["'self'"]
-        }
-    }
+    crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
-const ALLOW_ORIGINS = (process.env.CORS_ORIGINS || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-const DEFAULT_ORIGINS = [
+// CORS allowlist
+const ALLOW_ORIGINS = [
     "https://www.solink.network",
     "https://app.solink.network",
     "http://localhost:3000"
 ];
-const ORIGINS = ALLOW_ORIGINS.length ? ALLOW_ORIGINS : DEFAULT_ORIGINS;
 app.use(cors({
     origin(origin, cb) {
         if (!origin)
             return cb(null, true);
-        if (ORIGINS.includes(origin))
+        if (ALLOW_ORIGINS.includes(origin))
             return cb(null, true);
-        return cb(new Error("CORS blocked by server"));
+        cb(new Error("CORS blocked by server"));
     },
     credentials: true
 }));
+// Rate limit
 app.use(rateLimit({ windowMs: 60_000, max: 200 }));
-app.use((req, _res, next) => {
-    const auth = req.headers.authorization;
-    if (auth?.startsWith("Bearer ")) {
-        const token = auth.split(" ")[1];
-        try {
-            const payload = jwt.verify(token, process.env.JWT_SECRET);
-            req.user = { sub: String(payload.sub), iat: payload.iat, exp: payload.exp };
-        }
-        catch (err) {
-            console.warn("Invalid token:", err.message);
-        }
-    }
-    next();
-});
-app.get("/api/health", (_, res) => res.json({ ok: true, service: "api" }));
-app.get("/api/health/db", (_, res) => res.json({ db: "up", via: "pooled", host: process.env.DATABASE_POOL_URL }));
-app.use("/api/auth", authRoutes);
-app.use("/api/settings", settingsRoutes);
+// Health routes (ไม่ต้อง auth)
+const publicRouter = express.Router();
+mountHealth(publicRouter);
+app.use("/api", publicRouter);
+// Auth optional ใต้ /api (เช่น /api/settings)
+app.use("/api", authOptional);
+// Feature routes
+const featureRouter = express.Router();
+mountAuth(featureRouter);
+mountSettings(featureRouter);
+app.use("/api", featureRouter);
 const port = process.env.PORT || 4000;
-app.listen(port, () => console.log(`✅ Solink API running on :${port}`));
+app.listen(port, () => {
+    console.log(`Solink API running on :${port}`);
+});

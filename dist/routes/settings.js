@@ -1,50 +1,98 @@
-import { Router } from "express";
+import { prisma } from "../lib/prisma.js";
 import { z } from "zod";
-import { prisma } from "../lib/prisma";
-const r = Router();
-const UpsertReq = z.object({
-    settings: z.record(z.string().max(128), z.string().max(2048)),
-});
-r.get("/", async (req, res) => {
-    const userId = req.user?.sub ?? null;
-    if (!userId) {
-        const entries = await prisma.setting.findMany({
-            where: { userId: null },
-            take: 100,
-        });
-        const obj = Object.fromEntries(entries.map((e) => [e.key, e.value]));
-        const lang = obj["lang"] ?? "th";
-        const theme = obj["theme"] ?? "light";
-        return res.json({ ok: true, settings: { lang, theme }, source: "db", userId: null });
-    }
-    const entries = await prisma.setting.findMany({
-        where: { OR: [{ userId }, { userId: null }] },
-        take: 200,
-    });
+const allowedKeys = ["lang", "theme"];
+const settingsBodySchema = z.object({
+    lang: z.string().optional(),
+    theme: z.string().optional()
+}).strip();
+function toJsonString(v) {
+    return typeof v === "string" ? v : JSON.stringify(v);
+}
+async function loadMergedSettings(userId) {
+    const globals = await prisma.setting.findMany({ where: { userId: null } });
+    const personals = userId
+        ? await prisma.setting.findMany({ where: { userId } })
+        : [];
     const map = new Map();
-    for (const e of entries) {
-        if (e.userId === null && !map.has(e.key))
-            map.set(e.key, e.value);
+    for (const r of globals)
+        map.set(r.key, r.value);
+    for (const r of personals)
+        map.set(r.key, r.value);
+    const out = {};
+    for (const [k, raw] of map.entries()) {
+        try {
+            out[k] = JSON.parse(raw);
+        }
+        catch {
+            out[k] = raw;
+        }
     }
-    for (const e of entries) {
-        if (e.userId === userId)
-            map.set(e.key, e.value);
-    }
-    return res.json({ ok: true, settings: Object.fromEntries(map.entries()), source: "db", userId });
-});
-r.put("/", async (req, res) => {
-    const userId = req.user?.sub;
-    if (!userId)
-        return res.status(401).json({ ok: false, error: "unauthorized" });
-    const parse = UpsertReq.safeParse(req.body);
-    if (!parse.success)
-        return res.status(400).json({ ok: false, error: "bad_request" });
-    const entries = Object.entries(parse.data.settings);
-    await Promise.all(entries.map(([key, value]) => prisma.setting.upsert({
-        where: { userId_key: { userId, key } },
-        create: { userId, key, value },
-        update: { value },
-    })));
-    return res.json({ ok: true, updated: entries.length });
-});
-export default r;
+    return out;
+}
+export default function mountSettings(router) {
+    // GET /api/settings
+    router.get("/settings", async (req, res) => {
+        try {
+            const userId = req.user?.id ?? null;
+            const settings = await loadMergedSettings(userId);
+            return res.json({ ok: true, settings, source: "db", userId });
+        }
+        catch (e) {
+            return res.status(500).json({ ok: false, error: String(e?.message || e) });
+        }
+    });
+    // POST /api/settings — upsert หลาย key
+    router.post("/settings", async (req, res) => {
+        try {
+            const parsed = settingsBodySchema.safeParse(req.body ?? {});
+            if (!parsed.success) {
+                return res.status(400).json({ ok: false, error: "Invalid body", details: parsed.error.flatten() });
+            }
+            const body = parsed.data;
+            const entries = Object.entries(body).filter(([k]) => allowedKeys.includes(k));
+            if (entries.length === 0) {
+                return res.status(400).json({ ok: false, error: "No supported fields" });
+            }
+            const userId = req.user?.id ?? null;
+            await prisma.$transaction(async (tx) => {
+                for (const [key, val] of entries) {
+                    const value = toJsonString(val);
+                    if (userId) {
+                        await tx.setting.upsert({
+                            where: { userId_key: { userId, key } },
+                            create: { userId, key, value },
+                            update: { value }
+                        });
+                    }
+                    else {
+                        const existing = await tx.setting.findFirst({
+                            where: { userId: null, key },
+                            select: { id: true }
+                        });
+                        if (existing) {
+                            await tx.setting.update({
+                                where: { id: existing.id },
+                                data: { value }
+                            });
+                        }
+                        else {
+                            await tx.setting.create({
+                                data: { userId: null, key, value }
+                            });
+                        }
+                    }
+                }
+            });
+            const obj = Object.fromEntries(entries.map((entry) => [entry[0], entry[1]]));
+            return res.json({
+                ok: true,
+                updated: obj,
+                scope: userId ? "user" : "global",
+                userId
+            });
+        }
+        catch (e) {
+            return res.status(500).json({ ok: false, error: String(e?.message || e) });
+        }
+    });
+}
