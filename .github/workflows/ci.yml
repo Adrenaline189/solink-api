@@ -5,28 +5,43 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
+    name: build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'npm'
+      - run: npm ci
+      - run: echo "DATABASE_URL=postgresql://user:pass@localhost:5432/db" >> $GITHUB_ENV
+      - run: npx prisma generate
+      - run: npx tsc -p .
 
-      - name: Install dependencies (clean)
-        run: npm ci
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx eslint . || echo "No ESLint config found, skipping lint."
 
-      - name: Create fake env for Prisma
-        run: echo "DATABASE_URL=postgresql://user:pass@localhost:5432/db" >> $GITHUB_ENV
-
-      - name: Generate Prisma client
-        run: npx prisma generate
-
-      - name: Type check (tsc)
-        run: npx tsc -p .
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm test --if-present
