@@ -14,10 +14,11 @@
     "prisma:generate": "prisma generate",
     "migrate:deploy": "prisma migrate deploy",
     "db:push": "prisma db push",
-    "upgrade:prisma": "bash scripts/upgrade-prisma.sh"
+    "upgrade:prisma": "bash scripts/upgrade-prisma.sh",
+    "check:health": "bash scripts/check-health.sh"
   },
   "dependencies": {
-    "@prisma/client": "^5.22.0",
+    "@prisma/client": "^6.18.0",
     "bs58": "^6.0.0",
     "cors": "^2.8.5",
     "express": "^4.19.2",
@@ -32,7 +33,7 @@
     "@types/express": "^5.0.3",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^24.5.2",
-    "prisma": "^5.22.0",
+    "prisma": "^6.18.0",
     "tsx": "^4.19.1",
     "typescript": "^5.5.4"
   }
