@@ -53,3 +53,10 @@ model PointEvent {
 
   @@index([userId, createdAt]) // ใช้สรุปยอด/ดึงประวัติเร็วขึ้น
 }
+
+// ยอดคงเหลือแต้ม (อัปเดตด้วยธุรกรรม/หลังสร้าง PointEvent)
+model PointBalance {
+  userId    String   @id
+  balance   Int      @default(0)
+  updatedAt DateTime @updatedAt
+}
