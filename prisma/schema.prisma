@@ -1,17 +1,55 @@
+// prisma/schema.prisma
+
+// ----- Prisma Client -----
 generator client {
   provider = "prisma-client-js"
 }
 
+// ----- PostgreSQL datasource -----
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url      = env("DATABASE_URL") // ใช้ค่าใน .env หรือ Render Env
 }
 
+// =========================
+//        MODELS
+// =========================
+
+// ตั้งค่า (มีทั้งแบบ global และแบบของผู้ใช้)
 model Setting {
   id     String  @id @default(cuid())
-  userId String? // null = global
+  userId String?           // null = global
   key    String
   value  String
 
-  @@unique([userId, key])
+  @@unique([userId, key])  // หนึ่ง key ต่อหนึ่ง user (หรือ global)
+  @@index([key])           // เผื่อค้นหา key บ่อย
+}
+
+// ผู้ใช้ (ผูกกระเป๋าหรือ id จาก JWT)
+model User {
+  id        String       @id @default(cuid())
+  wallet    String?      @unique          // unique เมื่อไม่เป็น null
+  createdAt DateTime     @default(now())
+  events    PointEvent[] // ความสัมพันธ์ไปยังประวัติแต้ม
+}
+
+// ประวัติแต้ม (แต่ละ event ที่บวก/ลบแต้ม)
+model PointEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+
+  /// ประเภทของเหตุการณ์ เช่น "extension_farm", "referral", "bonus", "admin_adjust"
+  type      String
+
+  /// จำนวนแต้ม (+ เพิ่ม, ถ้าต้องลบเป็น - ได้)
+  amount    Int
+
+  /// เก็บข้อมูลประกอบ เช่น { "session": "s1", "note": "..." }
+  meta      Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt]) // ใช้สรุปยอด/ดึงประวัติเร็วขึ้น
 }
