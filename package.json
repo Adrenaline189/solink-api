@@ -15,7 +15,8 @@
     "migrate:deploy": "prisma migrate deploy",
     "db:push": "prisma db push",
     "upgrade:prisma": "bash scripts/upgrade-prisma.sh",
-    "check:health": "bash scripts/check-health.sh"
+    "check:health": "bash scripts/check-health.sh",
+    "prepare": "husky"
   },
   "dependencies": {
     "@prisma/client": "5.22.0",
@@ -35,6 +36,7 @@
     "@types/express": "^5.0.3",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^24.5.2",
+    "husky": "^9.1.7",
     "prisma": "5.22.0",
     "tsx": "^4.19.1",
     "typescript": "^5.5.4"
