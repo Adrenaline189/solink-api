@@ -1,6 +1,27 @@
 name: CI
 on: [push, pull_request]
+
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run build
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm ci
+      # ถ้ายังไม่มี eslint ใช้ tsc ตรวจ type ได้
+      - run: npx tsc -p .
+
   test:
     runs-on: ubuntu-latest
     steps:
