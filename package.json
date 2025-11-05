@@ -15,7 +15,8 @@
     "migrate:deploy": "prisma migrate deploy",
     "db:push": "prisma db push",
     "upgrade:prisma": "bash scripts/upgrade-prisma.sh",
-    "check:health": "bash scripts/check-health.sh"
+    "check:health": "bash scripts/check-health.sh",
+    "check:index": "ts-node --transpile-only scripts/check-index.ts"
   },
   "dependencies": {
     "@prisma/client": "5.22.0",
