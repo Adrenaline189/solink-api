@@ -1,6 +1,3 @@
--- 20251104160116_add_user_and_point_event (safe)
-
--- 1) ปรับตาราง Setting แบบปลอดภัย (ถ้ามีคอลัมน์เก่าอยู่ค่อยลบ)
 DO $$
 BEGIN
   IF EXISTS (
@@ -24,14 +21,12 @@ BEGIN
   END IF;
 END $$;
 
--- 2) ตาราง User (ถ้าไม่มีให้สร้าง)
 CREATE TABLE IF NOT EXISTS "User" (
   "id"        TEXT PRIMARY KEY,
   "wallet"    TEXT UNIQUE,
   "createdAt" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3) ตาราง PointEvent (ถ้าไม่มีให้สร้าง)
 CREATE TABLE IF NOT EXISTS "PointEvent" (
   "id"        TEXT PRIMARY KEY,
   "userId"    TEXT NOT NULL,
@@ -45,6 +40,5 @@ CREATE TABLE IF NOT EXISTS "PointEvent" (
     ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
--- 4) ดัชนีเพื่อการ query เร็วขึ้น
 CREATE INDEX IF NOT EXISTS "PointEvent_userId_createdAt_idx"
   ON "PointEvent" ("userId", "createdAt");
