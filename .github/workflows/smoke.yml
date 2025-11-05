@@ -1,0 +1,38 @@
+name: Smoke (staging)
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Demo login
+        id: login
+        run: |
+          TOKEN=$(curl -s -X POST https://api-solink.network/api/auth/demo-login \
+            -H "Content-Type: application/json" \
+            -d '{"wallet":"0x_ci_smoke"}' | jq -r .token)
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Earn first
+        run: |
+          curl -fsS -X POST https://api-solink.network/api/points/earn \
+            -H "Authorization: Bearer ${{ steps.login.outputs.token }}" \
+            -H "Content-Type: application/json" \
+            -d '{"type":"extension_farm","amount":50,"meta":{"session":"smoke1"}}' | jq .
+
+      - name: Earn duplicate (should dedupe)
+        run: |
+          jq -e '.deduped==true' <<<"$(
+            curl -fsS -X POST https://api-solink.network/api/points/earn \
+              -H "Authorization: Bearer ${{ steps.login.outputs.token }}" \
+              -H "Content-Type: application/json" \
+              -d '{"type":"extension_farm","amount":50,"meta":{"session":"smoke1"}}'
+          )"
+
+      - name: Check balance
+        run: |
+          curl -fsS https://api-solink.network/api/points/balance \
+            -H "Authorization: Bearer ${{ steps.login.outputs.token }}" | jq .
