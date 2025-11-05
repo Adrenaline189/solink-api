@@ -21,12 +21,14 @@ BEGIN
   END IF;
 END $$;
 
+-- 2) ตาราง User (สร้างถ้าไม่เคยมี)
 CREATE TABLE IF NOT EXISTS "User" (
   "id"        TEXT PRIMARY KEY,
   "wallet"    TEXT UNIQUE,
   "createdAt" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 3) ตาราง PointEvent (สร้างถ้าไม่เคยมี)
 CREATE TABLE IF NOT EXISTS "PointEvent" (
   "id"        TEXT PRIMARY KEY,
   "userId"    TEXT NOT NULL,
@@ -40,5 +42,6 @@ CREATE TABLE IF NOT EXISTS "PointEvent" (
     ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
+-- 4) ดัชนีเพื่อ query เร็วขึ้น (สร้างถ้าไม่เคยมี)
 CREATE INDEX IF NOT EXISTS "PointEvent_userId_createdAt_idx"
   ON "PointEvent" ("userId", "createdAt");
