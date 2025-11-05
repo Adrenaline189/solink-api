@@ -1,84 +1,79 @@
-// src/routes/points.ts
-import type { Router, Request, Response } from "express";
-import { prisma } from "../lib/prisma.js";
+router.post("/points/earn", authOptional, async (req, res) => {
+  // narrow ให้ชัดว่าเป็นผู้ใช้ที่ล็อกอิน และ sub เป็น string
+  if (!req.user || typeof req.user.sub !== "string") {
+    return res.status(401).json({ ok: false, error: "Unauthorized" });
+  }
+  const userId: string = req.user.sub;                 // <-- คอนกรีตเป็น string
+  const wallet = typeof req.user.wallet === "string" ? req.user.wallet : userId;
 
-function getUserFromReq(req: Request): { id: string; wallet?: string | null } | null {
-  const u = (req as any).user; // มาจาก authOptional ถ้ามี
-  if (!u?.sub) return null;
-  return { id: String(u.sub), wallet: u.wallet ?? null };
-}
+  try {
+    const { type, amount, meta } = earnSchema.parse(req.body);
 
-export default function mountPoints(router: Router) {
-  // POST /api/points/earn  { type, amount, meta? }
-  router.post("/points/earn", async (req: Request, res: Response) => {
-    try {
-      const u = getUserFromReq(req);
-      if (!u) return res.status(401).json({ ok: false, error: "Unauthorized" });
+    // ensure user exists
+    await prisma.user.upsert({
+      where: { id: userId },
+      update: {},
+      create: { id: userId, wallet },
+    });
 
-      const amount = Number(req.body?.amount ?? 0);
-      const type = String(req.body?.type ?? "");
-      const meta = req.body?.meta as any | undefined;
+    // create event
+    const event = await prisma.pointEvent.create({
+      data: { userId, type, amount, meta },            // <-- ใช้ userId (string)
+    });
 
-      if (!type || !Number.isFinite(amount) || amount === 0) {
-        return res.status(400).json({ ok: false, error: "Invalid type/amount" });
-      }
+    const agg = await prisma.pointEvent.aggregate({
+      where: { userId },
+      _sum: { amount: true },
+    });
 
-      // ensure user exists
-      await prisma.user.upsert({
-        where: { id: u.id },
-        update: {},
-        create: { id: u.id, wallet: u.wallet ?? null },
-      });
+    return res.json({ ok: true, event, balance: agg._sum.amount ?? 0 });
+  } catch (err: any) {
+    const msg = String(err?.message ?? "");
+    const code = err?.code;
 
-      const event = await prisma.pointEvent.create({
-        data: { userId: u.id, type, amount, meta },
-      });
+    const duplicateHit =
+      code === "P2002" ||
+      msg.includes("uniq_point_extfarm_session") ||
+      msg.includes("Unique constraint failed") ||
+      msg.includes("COALESCE(meta ->> 'session'");
 
+    if (duplicateHit) {
       const agg = await prisma.pointEvent.aggregate({
-        where: { userId: u.id },
+        where: { userId },                              // <-- ใช้ตัวแปรที่ narrowed แล้ว
         _sum: { amount: true },
       });
-
-      return res.json({ ok: true, event, balance: agg._sum.amount ?? 0 });
-    } catch (e: any) {
-      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+      return res.status(200).json({ ok: true, deduped: true, event: null, balance: agg._sum.amount ?? 0 });
     }
+
+    console.error("[points/earn] error", err);
+    return res.status(400).json({ ok: false, error: err?.message ?? "Bad request" });
+  }
+});
+
+router.get("/points/balance", authOptional, async (req, res) => {
+  if (!req.user || typeof req.user.sub !== "string") {
+    return res.status(401).json({ ok: false, error: "Unauthorized" });
+  }
+  const userId: string = req.user.sub;
+
+  const agg = await prisma.pointEvent.aggregate({
+    where: { userId },
+    _sum: { amount: true },
   });
+  res.json({ ok: true, balance: agg._sum.amount ?? 0 });
+});
 
-  // GET /api/points/balance
-  router.get("/points/balance", async (req: Request, res: Response) => {
-    try {
-      const u = getUserFromReq(req);
-      if (!u) return res.status(401).json({ ok: false, error: "Unauthorized" });
+router.get("/points/events", authOptional, async (req, res) => {
+  if (!req.user || typeof req.user.sub !== "string") {
+    return res.status(401).json({ ok: false, error: "Unauthorized" });
+  }
+  const userId: string = req.user.sub;
 
-      const agg = await prisma.pointEvent.aggregate({
-        where: { userId: u.id },
-        _sum: { amount: true },
-      });
-
-      return res.json({ ok: true, balance: agg._sum.amount ?? 0 });
-    } catch (e: any) {
-      return res.status(500).json({ ok: false, error: String(e?.message || e) });
-    }
+  const limit = Math.min(Number(req.query.limit ?? 20), 100);
+  const events = await prisma.pointEvent.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+    take: limit,
   });
-
-  // GET /api/points/events?limit=10
-  router.get("/points/events", async (req: Request, res: Response) => {
-    try {
-      const u = getUserFromReq(req);
-      if (!u) return res.status(401).json({ ok: false, error: "Unauthorized" });
-
-      const limit = Math.min(Math.max(Number(req.query.limit ?? 20), 1), 100);
-
-      const events = await prisma.pointEvent.findMany({
-        where: { userId: u.id },
-        orderBy: { createdAt: "desc" },
-        take: limit,
-      });
-
-      return res.json({ ok: true, events });
-    } catch (e: any) {
-      return res.status(500).json({ ok: false, error: String(e?.message || e) });
-    }
-  });
-}
+  res.json({ ok: true, events });
+});
