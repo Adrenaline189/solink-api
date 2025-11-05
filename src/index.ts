@@ -10,14 +10,18 @@ import jwt from "jsonwebtoken";
 import mountAuth from "./routes/auth.js";
 import mountSettings from "./routes/settings.js";
 import mountHealth from "./routes/health.js";
-import mountPoints from "./routes/points.js"; // ✅ เพิ่ม router แต้ม
+import mountPoints from "./routes/points.js";
 import { authOptional } from "./middleware/auth.js";
 
 /* -------------------------------------------
  * App bootstrap
  * -----------------------------------------*/
 const app = express();
-app.set("trust proxy", 1); // ช่วยให้อ่าน IP หลัง Proxy/Cloudflare/Render ถูกต้อง
+
+// ใช้ค่า 1 เพื่อเชื่อเฮดเดอร์จาก proxy ชั้นนอก (Cloudflare/Render)
+// และแก้คำเตือน express-rate-limit เรื่อง X-Forwarded-For
+app.set("trust proxy", 1);
+
 app.use(express.json());
 app.use(cookieParser());
 
@@ -26,6 +30,7 @@ app.use(cookieParser());
  * -----------------------------------------*/
 app.use(
   helmet({
+    // อนุญาตโหลดไฟล์ข้ามโดเมน (เช่นรูป/ฟอนต์จาก CDN)
     crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
@@ -48,7 +53,8 @@ const ALLOW_ORIGINS = new Set<string>([...defaultAllowOrigins, ...envAllow]);
 
 const corsOptions: CorsOptions = {
   origin(origin, cb) {
-    if (!origin) return cb(null, true); // รองรับ curl/healthcheck
+    // รองรับ curl/healthcheck (ไม่มี Origin)
+    if (!origin) return cb(null, true);
     if (ALLOW_ORIGINS.has(origin)) return cb(null, true);
     cb(new Error("CORS blocked by server"));
   },
@@ -57,13 +63,15 @@ const corsOptions: CorsOptions = {
 };
 
 app.use(cors(corsOptions));
+// ให้ preflight ทำงานครบ ๆ
+app.options("*", cors(corsOptions));
 
 /* -------------------------------------------
  * Rate limiting (เบื้องต้น)
  * -----------------------------------------*/
 const commonLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 200,
+  windowMs: 60_000, // 1 นาที
+  max: 200,         // 200 req/นาที/IP
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -81,6 +89,7 @@ publicRouter.get("/auth/check", (req: Request, res: Response) => {
   try {
     const authHeader = req.headers.authorization || "";
     const [scheme, token] = authHeader.split(" ");
+
     if (!scheme || scheme.toLowerCase() !== "bearer" || !token) {
       return res
         .status(401)
@@ -107,7 +116,7 @@ app.use("/api", publicRouter);
 
 /* -------------------------------------------
  * Optional auth parser ใต้ /api
- * ไม่มี token ก็เข้าได้ แต่ endpoint ภายในจะเช็คเอง
+ * (ไม่มี token ก็เข้าได้ แต่ endpoint ภายในจะเช็คเอง)
  * -----------------------------------------*/
 app.use("/api", authOptional);
 
@@ -117,7 +126,7 @@ app.use("/api", authOptional);
 const featureRouter = express.Router();
 mountAuth(featureRouter);
 mountSettings(featureRouter);
-mountPoints(featureRouter); // ✅ เส้นทางแต้ม: /api/points/*
+mountPoints(featureRouter); // /api/points/*
 app.use("/api", featureRouter);
 
 /* -------------------------------------------
@@ -152,3 +161,5 @@ const port = Number(process.env.PORT) || 4000;
 app.listen(port, () => {
   console.log(`Solink API running on :${port}`);
 });
+
+export default app;
