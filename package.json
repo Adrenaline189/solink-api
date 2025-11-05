@@ -16,7 +16,8 @@
     "db:push": "prisma db push",
     "upgrade:prisma": "bash scripts/upgrade-prisma.sh",
     "check:health": "bash scripts/check-health.sh",
-    "check:index": "ts-node --transpile-only scripts/check-index.ts"
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest -i",
+    "test:ci": "NODE_OPTIONS=--experimental-vm-modules jest -i --runInBand --ci"
   },
   "dependencies": {
     "@prisma/client": "6.19.0",
@@ -34,9 +35,14 @@
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.3",
+    "@types/jest": "^30.0.0",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^24.5.2",
+    "@types/supertest": "^6.0.3",
+    "jest": "^30.2.0",
     "prisma": "6.19.0",
+    "supertest": "^7.1.4",
+    "ts-jest": "^29.4.5",
     "tsx": "^4.19.1",
     "typescript": "^5.5.4"
   }
