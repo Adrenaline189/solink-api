@@ -5,6 +5,39 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { authOptional } from "../middleware/auth.js";
 
+/** ---------- Helpers / ENV ---------- */
+
+function boolEnv(name: string, def: boolean): boolean {
+  const v = (process.env[name] ?? "").toLowerCase();
+  if (v === "true") return true;
+  if (v === "false") return false;
+  return def;
+}
+function numEnv(name: string, def: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) ? n : def;
+}
+
+const REFERRAL_ENABLED = boolEnv("REFERRAL_ENABLED", true);
+const REFERRAL_REQUIRE_CONCURRENCY = boolEnv("REFERRAL_REQUIRE_CONCURRENCY", true);
+const REFERRAL_BONUS_POINTS = Math.max(1, Math.floor(numEnv("REFERRAL_BONUS_POINTS", 100)));
+const REFERRAL_MATCH_KEY = (process.env.REFERRAL_MATCH_KEY ?? "").trim() || null;
+
+/** Minimum active days for referrer in the window (recommend 3) */
+function minActiveDays(): number {
+  const raw = Number(process.env.REFERRAL_MIN_ACTIVE_DAYS ?? "3");
+  return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 3;
+}
+
+/** Concurrency window in minutes. Default 7 days (10080). Hard-capped at 7 days. */
+function concurrencyWindowMin(): number {
+  const raw = Number(process.env.REFERRAL_CONCURRENCY_WINDOW_MIN ?? "10080");
+  const val = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 10080;
+  return Math.min(val, 10080);
+}
+
+/** ---------- Zod Schemas ---------- */
+
 /**
  * Earn schemas
  * - extension_farm: regular earning ticks from extension (idempotent via meta.session)
@@ -14,8 +47,8 @@ const earnExtensionSchema = z.object({
   type: z.literal("extension_farm"),
   amount: z.number().int().positive(),
   meta: z.object({
-    session: z.string().min(1),       // idempotency key (unique per tick)
-    poolId: z.string().min(1).optional(),  // optional grouping key if you use pools/rooms
+    session: z.string().min(1), // idempotency key (unique per tick)
+    poolId: z.string().min(1).optional(), // optional grouping key if you use pools/rooms
     partyId: z.string().min(1).optional(),
   }),
 });
@@ -32,6 +65,7 @@ const earnReferralSchema = z.object({
 // Allow both; client typically sends only extension_farm
 const earnSchema = z.union([earnExtensionSchema, earnReferralSchema]);
 
+/** ---------- Rate limit ---------- */
 /**
  * Per-user rate limiter:
  * - 30 requests per minute per authenticated user (fallback to IP when unauthenticated)
@@ -53,39 +87,8 @@ const earnLimiter = rateLimit({
   },
 });
 
-/** ENV helpers */
-function getReferralBonusAmount(): number {
-  const raw = process.env.REFERRAL_BONUS_POINTS;
-  const n = raw ? Number(raw) : 100;
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 100;
-}
+/** ---------- SQL helpers ---------- */
 
-/**
- * Concurrency window in minutes.
- * Default 7 days (10080). Hard-capped at 7 days for safety.
- */
-function concurrencyWindowMin(): number {
-  const raw = Number(process.env.REFERRAL_CONCURRENCY_WINDOW_MIN ?? "10080");
-  const val = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 10080;
-  return Math.min(val, 10080);
-}
-
-function requireConcurrency(): boolean {
-  return (process.env.REFERRAL_REQUIRE_CONCURRENCY ?? "true").toLowerCase() === "true";
-}
-
-function matchKey(): string | null {
-  const k = (process.env.REFERRAL_MATCH_KEY ?? "").trim();
-  return k.length ? k : null;
-}
-
-/** Minimum active days for referrer in the window (recommend 3) */
-function minActiveDays(): number {
-  const raw = Number(process.env.REFERRAL_MIN_ACTIVE_DAYS ?? "3");
-  return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 3;
-}
-
-/** SQL helpers for performance and compatibility */
 async function countActiveDaysForReferrerWithin(
   referrerId: string,
   since: Date,
@@ -146,6 +149,7 @@ async function hasReferrerEventWithin(
   }
 }
 
+/** ---------- Referral bonus core (with loud logs) ---------- */
 /**
  * Attempt to award the referral bonus exactly once when:
  *  - referred user has a valid referrer
@@ -161,48 +165,76 @@ async function tryAwardFirstEarnReferralBonus(params: {
 }) {
   const { referredUserId, referredMeta } = params;
 
-  // Load referred user (no Prisma select to keep TS compatibility while schema is evolving)
-  const referredUser = await prisma.user.findUnique({
-    where: { id: referredUserId },
-  });
+  if (!REFERRAL_ENABLED) {
+    console.log("[referral] disabled via REFERRAL_ENABLED=false");
+    return null;
+  }
 
-  // Compat: read referrerId via "any" to avoid TS errors if Prisma Client hasn't generated the field yet
+  // Load referred user
+  const referredUser = await prisma.user.findUnique({ where: { id: referredUserId } });
   const referrerId = (referredUser as any)?.referrerId ?? null;
-  if (!referrerId || referrerId === referredUserId) return null;
 
-  if (requireConcurrency()) {
+  if (!referrerId || referrerId === referredUserId) {
+    console.warn("[referral] missing/loop referrerId", { referredUserId, referrerId });
+    return null;
+  }
+
+  // Concurrency & activity gates
+  if (REFERRAL_REQUIRE_CONCURRENCY) {
     const minutes = concurrencyWindowMin();
     const since = new Date(Date.now() - minutes * 60 * 1000);
-    const key = matchKey();
+    const key = REFERRAL_MATCH_KEY;
     const val =
-      key && referredMeta && typeof referredMeta[key] === "string" ? String(referredMeta[key]) : null;
+      key && referredMeta && typeof referredMeta[key] === "string"
+        ? String(referredMeta[key])
+        : null;
 
-    // (a) referrer must have at least one event within the window (and match key if configured)
+    console.log("[referral] gate check", {
+      referrerId,
+      referredUserId,
+      minutes,
+      since: since.toISOString(),
+      key,
+      val,
+      needDays: minActiveDays(),
+    });
+
+    // (a) referrer has any activity in window (+match key if configured)
     const hasAny = await hasReferrerEventWithin(referrerId, since, key, val);
+    console.log("[referral] hasReferrerEventWithin =", hasAny);
     if (!hasAny) return null;
 
-    // (b) referrer must be active at least N distinct days in the window
+    // (b) referrer active for at least N distinct days
     const needDays = minActiveDays();
     if (needDays > 0) {
       const days = await countActiveDaysForReferrerWithin(referrerId, since, key, val);
+      console.log("[referral] activeDays =", days, "need =", needDays);
       if (days < needDays) return null;
     }
+  } else {
+    console.log("[referral] REFERRAL_REQUIRE_CONCURRENCY=false (skipping gate)");
   }
 
-  const amount = getReferralBonusAmount();
+  // Create referral bonus (idempotent by partial unique index)
   try {
     const event = await prisma.pointEvent.create({
       data: {
         userId: referrerId,
         type: "referral_bonus",
-        amount,
+        amount: REFERRAL_BONUS_POINTS,
         meta: {
           referredUserId,
           reason: "first_earn",
-          matchedKey: matchKey() ?? undefined,
-          matchedVal: matchKey() ? referredMeta?.[matchKey()!] : undefined,
+          matchedKey: REFERRAL_MATCH_KEY ?? undefined,
+          matchedVal: REFERRAL_MATCH_KEY ? referredMeta?.[REFERRAL_MATCH_KEY] : undefined,
         } as any,
       },
+    });
+    console.log("[referral] bonus created", {
+      eventId: event.id,
+      referrerId,
+      referredUserId,
+      amount: REFERRAL_BONUS_POINTS,
     });
     return event;
   } catch (err: any) {
@@ -212,10 +244,16 @@ async function tryAwardFirstEarnReferralBonus(params: {
       code === "P2002" ||
       msg.includes("uniq_point_referral_firstearn") ||
       msg.includes("Unique constraint failed");
-    if (isDuplicate) return null;
+    if (isDuplicate) {
+      console.log("[referral] duplicate bonus suppressed", { referredUserId });
+      return null;
+    }
+    console.error("[referral] create error", err);
     throw err;
   }
 }
+
+/** ---------- Router ---------- */
 
 export default function mountPoints(router: Router) {
   /**
@@ -235,7 +273,7 @@ export default function mountPoints(router: Router) {
       }
       const userId: string = req.user.sub;
       const wallet =
-        typeof (req as any).user.wallet === "string" ? (req as any).user.wallet : userId;
+        typeof (req as any).user?.wallet === "string" ? (req as any).user.wallet : userId;
 
       try {
         const parsed = earnSchema.parse(req.body);
@@ -260,9 +298,23 @@ export default function mountPoints(router: Router) {
             },
           });
 
-          // Check if this is the user's FIRST ever event
+          // Count AFTER insertion – if this is the very first event for this user, try awarding.
           const totalCount = await prisma.pointEvent.count({ where: { userId } });
+          console.log("[earn] user total events after insert =", { userId, totalCount });
+
           if (totalCount === 1) {
+            // Loud logs for first-earn referral attempt
+            console.log("[referral] first-earn detected; attempting bonus", {
+              referredUserId: userId,
+              meta: parsed.meta,
+              REFERRAL_ENABLED,
+              REFERRAL_REQUIRE_CONCURRENCY,
+              REFERRAL_MATCH_KEY,
+              REFERRAL_BONUS_POINTS,
+              windowMin: concurrencyWindowMin(),
+              minActiveDays: minActiveDays(),
+            });
+
             try {
               await tryAwardFirstEarnReferralBonus({
                 referredUserId: userId,
