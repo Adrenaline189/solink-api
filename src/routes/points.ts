@@ -89,6 +89,14 @@ const earnLimiter = rateLimit({
 
 /** ---------- SQL helpers ---------- */
 
+// Runtime-safe: fetch referrerId even if Prisma model doesn't have the field yet
+async function getReferrerId(userId: string): Promise<string | null> {
+  const rows = await prisma.$queryRaw<{ referrerId: string | null }[]>`
+    SELECT "referrerId" FROM "User" WHERE id = ${userId} LIMIT 1
+  `;
+  return (rows?.[0]?.referrerId ?? null) as string | null;
+}
+
 async function countActiveDaysForReferrerWithin(
   referrerId: string,
   since: Date,
@@ -170,9 +178,8 @@ async function tryAwardFirstEarnReferralBonus(params: {
     return null;
   }
 
-  // Load referred user
-  const referredUser = await prisma.user.findUnique({ where: { id: referredUserId } });
-  const referrerId = (referredUser as any)?.referrerId ?? null;
+  // Fetch referrerId via raw SQL (works even if Prisma client schema is behind)
+  const referrerId = await getReferrerId(referredUserId);
 
   if (!referrerId || referrerId === referredUserId) {
     console.warn("[referral] missing/loop referrerId", { referredUserId, referrerId });
@@ -199,12 +206,10 @@ async function tryAwardFirstEarnReferralBonus(params: {
       needDays: minActiveDays(),
     });
 
-    // (a) referrer has any activity in window (+match key if configured)
     const hasAny = await hasReferrerEventWithin(referrerId, since, key, val);
     console.log("[referral] hasReferrerEventWithin =", hasAny);
     if (!hasAny) return null;
 
-    // (b) referrer active for at least N distinct days
     const needDays = minActiveDays();
     if (needDays > 0) {
       const days = await countActiveDaysForReferrerWithin(referrerId, since, key, val);
@@ -226,7 +231,7 @@ async function tryAwardFirstEarnReferralBonus(params: {
           referredUserId,
           reason: "first_earn",
           matchedKey: REFERRAL_MATCH_KEY ?? undefined,
-          matchedVal: REFERRAL_MATCH_KEY ? referredMeta?.[REFERRAL_MATCH_KEY] : undefined,
+          matchedVal: REFERRAL_MATCH_KEY ? (referredMeta as any)?.[REFERRAL_MATCH_KEY] : undefined,
         } as any,
       },
     });
@@ -303,7 +308,6 @@ export default function mountPoints(router: Router) {
           console.log("[earn] user total events after insert =", { userId, totalCount });
 
           if (totalCount === 1) {
-            // Loud logs for first-earn referral attempt
             console.log("[referral] first-earn detected; attempting bonus", {
               referredUserId: userId,
               meta: parsed.meta,
